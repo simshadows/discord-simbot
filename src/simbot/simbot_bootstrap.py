@@ -7,20 +7,24 @@ automatically by this module as needed.
 """
 
 import os
-import os.path 
+import os.path
+import sys
+import time
+import textwrap
+import multiprocessing as mp
 from copy import deepcopy
 
 from .simbot import run as run_simbot
 
-from .utils import json_read, json_write, re_digits
+from .utils import json_read, json_write
 
 _DEFAULT_CONFIG_PATH = "./config.json"
 
+# IMPORTANT: The config must not contain dictionaries within lists. This keeps things
+# nice and simple! :)
 _DEFAULT_CONFIG_DICT = {
     "bot_login_token": "PLACEHOLDER",
-    "bot_owners_ids": [
-        "PLACEHOLDER",
-    ],
+    "bot_owner_id": "PLACEHOLDER",
     "paths": {
         "data_folder": "./data/",
         "logs": "./data/logs/",
@@ -28,6 +32,15 @@ _DEFAULT_CONFIG_DICT = {
     "defaults": {
         "command_prefix": "/",
         "status_message": "bot is running!",
+    },
+    "error_handling": {
+
+        # If True, bot is automatically restarted after a full process crash.
+        "automatic_restart_after_crash": True,
+
+        # Forces errors to be reported to bot owners, overriding settings.
+        "force_message_bot_owners_on_error": True,
+
     },
     #"options": {
     #    #TODO
@@ -70,26 +83,58 @@ def warn_extra_keys(config, default_config, key_list=[]):
 
 def config_type_checks(config):
     """
-    Raises exceptions if types are wrong.
-    """
-    if not isinstance(config["bot_login_token"], str):
-        raise TypeError("Bot login token must be a string.")
-    if not all(re_digits.fullmatch(x) for x in config["bot_owners_ids"]):
-        raise ValueError("Bot owner user IDs must be strings of digit characters only.")
+    Carries out primitive type checks. Raises exceptions if types are wrong.
 
-    if not isinstance(config["paths"]["data_folder"], str):
+    IMPORTANT: This method will only guarantee primitive types (e.g. strings, ints),
+    but will NOT guarantee checking of data (e.g. negative ints, strings representing
+    Discord user IDs, and whether or not a list contains at least one value). Further
+    data validation must be carried out down the line.
+    """
+    obj = config["bot_login_token"]
+    if not isinstance(obj, str):
+        raise TypeError("Bot login token must be a string.")
+    obj = config["bot_owner_id"]
+    if not isinstance(obj, str):
+        raise ValueError("Bot owner user ID must be a string.")
+
+    obj = config["paths"]["data_folder"]
+    if not isinstance(obj, str):
         raise TypeError("Data folder path must be a string.")
-    if not isinstance(config["paths"]["logs"], str):
+    obj = config["paths"]["logs"]
+    if not isinstance(obj, str):
         raise TypeError("Logs folder path must be a string.")
 
-    if not isinstance(config["defaults"]["command_prefix"], str):
+    obj = config["defaults"]["command_prefix"]
+    if not isinstance(obj, str):
         raise TypeError("Command prefix must be a string.")
-    if not isinstance(config["defaults"]["status_message"], str):
+    obj = config["defaults"]["status_message"]
+    if not isinstance(obj, str):
         raise TypeError("Status message must be a string.")
+
+    obj = config["error_handling"]["automatic_restart_after_crash"]
+    if not isinstance(obj, bool):
+        raise TypeError("automatic_restart_after_crash must be a boolean.")
+    obj = config["error_handling"]["force_message_bot_owners_on_error"]
+    if not isinstance(obj, bool):
+        raise TypeError("force_message_bot_owners_on_error must be a boolean.")
     return
 
+def run_simbot_in_worker_proc(config):
+    config = deepcopy(config)
+    # A child process editing the config dict probably won't do much, but better to
+    # be a bit safe?
+    def child_entrypoint():
+        sys.exit(run_simbot(config))
+
+    proc = mp.Process(target=child_entrypoint, daemon=True)
+    proc.start()
+    proc.join()
+    return proc.exitcode
+
 def run(config_path=_DEFAULT_CONFIG_PATH):
-    # Read config file
+    exitcode = 1 # An error by default.
+
+    print("Reading configuration file...") # TODO: log?
     config = None
     if os.path.isfile(config_path):
         config = json_read(config_path)
@@ -102,13 +147,36 @@ def run(config_path=_DEFAULT_CONFIG_PATH):
         json_write(config_path, data=config)
 
         # Run the bot!
-        run_simbot(config)
-        # TODO: Wrap in a child process!
+        reconnect_on_error = config["error_handling"]["automatic_restart_after_crash"]
+        assert isinstance(reconnect_on_error, bool)
+        while True:
+            print("Starting the bot...")
+            exitcode = run_simbot_in_worker_proc(config)
+            print(f"Bot worker process terminated. Exit code {exitcode}.")
+            if exitcode == 0:
+                print("Bot will terminate normally.")
+                break
+            if not reconnect_on_error:
+                print("automatic_restart_after_crash is false. "
+                        "Bot will terminate abnormally.")
+                break
+            print("Abnormal exit. Reconnecting in 10 seconds.")
+            time.sleep(10)
+            print("Attempting to restart...")
     else:
         config = _DEFAULT_CONFIG_DICT
         # Save config file
         json_write(config_path, data=config)
         print(f"Created config file {config_path}. Please edit this and run again!")
+        buf = textwrap.dedent("""
+                This appears to be your first time setting up this bot.
 
-    return 0
+                Please edit the following items in in config.ini before relaunching:
+                    bot_login_token
+                    bot_owner_id
+                """).strip()
+        print(buf)
+        exitcode = 0
+
+    return exitcode
 
