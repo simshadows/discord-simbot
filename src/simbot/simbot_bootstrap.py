@@ -34,7 +34,7 @@ _DEFAULT_CONFIG_DICT = {
     "bot_owner_id": "PLACEHOLDER",    # (String)
     "logging_level_override": None,   # (String | NULL)
     "paths": {
-        "data_folder": "./data/",       # (String)
+        "data_folder": "./data/",  # (String)
         "logfile": "./simbot.log", # (String)
     },
     "defaults": {
@@ -68,7 +68,7 @@ def merge_default(config, default_config):
 
 def warn_extra_keys(config, default_config, key_list=[]):
     """
-    Warns the user if there are extra keys.
+    Warns the user if there extra keys.
     Recursively checks dictionaries.
     """
     global buffered_warnings
@@ -84,56 +84,21 @@ def warn_extra_keys(config, default_config, key_list=[]):
             # Prepare warning string
             buf = key_list + [k,]
             buf = [(f"\"{x}\"" if isinstance(x, str) else str(x)) for x in buf]
-            # Issue warning
+            # Issue warning string
             buf = "Extra key " + ":".join(buf) + " in configuration file."
             print(buf)
             buffered_warnings.append(buf)
-            # TODO: LOG THIS.
-    return
-
-def config_type_checks(config):
-    """
-    Carries out primitive type checks. Raises exceptions if types are wrong.
-
-    IMPORTANT: This method will only guarantee primitive types (e.g. strings, ints),
-    but will NOT guarantee checking of data (e.g. negative ints, strings representing
-    Discord user IDs, and whether or not a list contains at least one value). Further
-    data validation must be carried out down the line.
-    """
-    obj = config["bot_login_token"]
-    if not isinstance(obj, str):
-        raise TypeError("Bot login token must be a string.")
-    obj = config["bot_owner_id"]
-    if not isinstance(obj, str):
-        raise TypeError("Bot owner user ID must be a string.")
-    obj = config["logging_level_override"]
-    if not (isinstance(obj, str) or (obj is None)):
-        raise TypeError("Logging level override must be a string, or null.")
-
-    obj = config["paths"]["data_folder"]
-    if not isinstance(obj, str):
-        raise TypeError("Data folder path must be a string.")
-    obj = config["paths"]["logfile"]
-    if not isinstance(obj, str):
-        raise TypeError("Log file path must be a string.")
-
-    obj = config["defaults"]["command_prefix"]
-    if not isinstance(obj, str):
-        raise TypeError("Command prefix must be a string.")
-    obj = config["defaults"]["status_message"]
-    if not isinstance(obj, str):
-        raise TypeError("Status message must be a string.")
-
-    obj = config["error_handling"]["automatic_restart_after_crash"]
-    if not isinstance(obj, bool):
-        raise TypeError("automatic_restart_after_crash must be a boolean.")
-    obj = config["error_handling"]["force_message_bot_owners_on_error"]
-    if not isinstance(obj, bool):
-        raise TypeError("force_message_bot_owners_on_error must be a boolean.")
     return
 
 def setup_logging(level, log_filename):
     global logger
+    global buffered_warnings
+
+    if not ((level is None) or isinstance(level, str)):
+        raise TypeError("Logging level must be a string or None.")
+    if not isinstance(log_filename, str):
+        raise TypeError("Log filename must be a string.")
+
     logger = logging.getLogger(None) # Get root Logger
     if not (level is None):
         all_levels = {
@@ -163,6 +128,10 @@ def setup_logging(level, log_filename):
     logger = logging.getLogger(__name__)
 
     logger.info("Logging initialized for simbot.")
+
+    for s in buffered_warnings:
+        logger.warning(s)
+    buffered_warnings = None # Garbage collect the buffer
     return
 
 def run_simbot_in_worker_proc(config):
@@ -187,15 +156,17 @@ def run(config_path=_DEFAULT_CONFIG_PATH):
 
         merge_default(config, _DEFAULT_CONFIG_DICT)
         warn_extra_keys(config, _DEFAULT_CONFIG_DICT)
-        config_type_checks(config)
 
         json_write(config_path, data=config)
 
         setup_logging(config["logging_level_override"], config["paths"]["logfile"])
 
         # Run the bot!
+
         reconnect_on_error = config["error_handling"]["automatic_restart_after_crash"]
-        assert isinstance(reconnect_on_error, bool)
+        if not isinstance(reconnect_on_error, bool):
+            raise TypeError("reconnect_on_error must be a Boolean.")
+
         logger.info("Bot starting.")
         while True:
             exitcode = run_simbot_in_worker_proc(config)
