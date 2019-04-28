@@ -17,7 +17,13 @@ from copy import deepcopy
 
 from .simbot import run as run_simbot
 
-from .utils import json_read, json_write
+from .utils import (
+    json_read, json_write
+)
+from .utils_logging import (
+    LOGGER_PREFIX, NameLevelFilter, get_new_logger,
+    get_project_parent_logger, safe_parse_logging_level
+)
 
 logger = None # Configure later
 buffered_warnings = []
@@ -32,10 +38,15 @@ _DEFAULT_CONFIG_PATH = "./config.json"
 _DEFAULT_CONFIG_DICT = {
     "bot_login_token": "PLACEHOLDER", # (String)
     "bot_owner_id": "PLACEHOLDER",    # (String)
-    "logging_level_override": None,   # (String | NULL)
     "paths": {
-        "data_folder": "./data/",  # (String)
-        "logfile": "./simbot.log", # (String)
+        "data_folder": "./data/",      # (String)
+        "logfile":     "./simbot.log", # (String)
+    },
+    "logging": {
+        "logfile_simbot_level":    "WARNING", # (String)
+        "logfile_libraries_level": "WARNING", # (String)
+        "stderr_simbot_level":     "INFO",    # (String)
+        "stderr_libraries_level":  "WARNING", # (String)
     },
     "defaults": {
         "command_prefix": "/",               # (String)
@@ -90,41 +101,55 @@ def warn_extra_keys(config, default_config, key_list=[]):
             buffered_warnings.append(buf)
     return
 
-def setup_logging(level, log_filename):
+def setup_logging(config):
     global logger
     global buffered_warnings
 
-    if not ((level is None) or isinstance(level, str)):
-        raise TypeError("Logging level must be a string or None.")
-    if not isinstance(log_filename, str):
-        raise TypeError("Log filename must be a string.")
+    if not isinstance(config, dict):
+        raise TypeError("config must be of type dict.")
+
+    # First need to parse out the logging configuration
+
+    logfile_path = config["paths"]["logfile"]
+    if not isinstance(logfile_path, str):
+        raise TypeError("logfile must be a string.")
+
+    d = config["logging"]
+    logfile_simbot_level = safe_parse_logging_level(d["logfile_simbot_level"])
+    logfile_libs_level   = safe_parse_logging_level(d["logfile_libraries_level"])
+    stderr_simbot_level  = safe_parse_logging_level(d["stderr_simbot_level"])
+    stderr_libs_level    = safe_parse_logging_level(d["stderr_libraries_level"])
 
     logger = logging.getLogger(None) # Get root Logger
-    if not (level is None):
-        all_levels = {
-            "critical": logging.CRITICAL,
-            "error":    logging.ERROR,
-            "warning":  logging.WARNING,
-            "info":     logging.INFO,
-            "debug":    logging.DEBUG,
-        }
-        logger.setLevel(all_levels[level.strip().lower()])
+    logger.setLevel(logging.DEBUG)
 
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
+    logfile_fmt = logging.Formatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
+    stderr_fmt  = logging.Formatter("[%(levelname)s] (%(name)s) %(message)s")
+
+    logfile_simbot_flt = NameLevelFilter(name=LOGGER_PREFIX, level=logfile_simbot_level)
+    logfile_libs_flt   = NameLevelFilter(name=LOGGER_PREFIX, level=logfile_libs_level,
+            inverse=True)
+    stderr_simbot_flt  = NameLevelFilter(name=LOGGER_PREFIX, level=stderr_simbot_level)
+    stderr_libs_flt    = NameLevelFilter(name=LOGGER_PREFIX, level=stderr_libs_level,
+            inverse=True)
 
     # File Handler
-    fh = logging.FileHandler(log_filename)
+    fh = logging.FileHandler(logfile_path)
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(formatter)
+    fh.setFormatter(logfile_fmt)
+    fh.addFilter(logfile_simbot_flt)
+    fh.addFilter(logfile_libs_flt)
     logger.addHandler(fh)
 
     # Console handler
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
-    ch.setFormatter(formatter)
+    ch.setFormatter(stderr_fmt)
+    ch.addFilter(stderr_simbot_flt)
+    ch.addFilter(stderr_libs_flt)
     logger.addHandler(ch)
 
-    # Get module logger
+    # Replace with module logger
     logger = logging.getLogger(__name__)
 
     logger.info("Logging initialized for simbot.")
@@ -159,7 +184,7 @@ def run(config_path=_DEFAULT_CONFIG_PATH):
 
         json_write(config_path, data=config)
 
-        setup_logging(config["logging_level_override"], config["paths"]["logfile"])
+        setup_logging(config)
 
         # Run the bot!
 

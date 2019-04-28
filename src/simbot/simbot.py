@@ -4,12 +4,13 @@ Author:   contact@simshadows.com
 """
 
 import sys
-import logging
 import asyncio
 
 from discord import Client # python3 -m pip install -U discord.py[voice]
 
-logger = logging.getLogger(__name__)
+from .utils_logging import get_new_logger
+
+logger = get_new_logger(__name__)
 
 
 class Simbot(Client):
@@ -20,6 +21,7 @@ class Simbot(Client):
 
     async def on_message(self, msg):
         if msg.content == "!hello":
+            logger.info("I just got greeted by a kind user! <3")
             await msg.channel.send("Hello, World!")
         return
 
